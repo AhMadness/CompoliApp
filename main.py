@@ -124,7 +124,7 @@ class InputDialog(QDialog):
         self.stateDropdown = QComboBox()  
         self.stateDropdown.setFixedHeight(24)
         self.stateDropdown.setFixedWidth(150)
-        self.stateDropdown.addItem("State List") 
+        self.stateDropdown.addItem("U.S State List") 
         realative = ["Real", "Relative"]
         self.stateDropdown.addItems(realative)  # add 'Real' and 'Relative' to stateDropdown
         self.stateDropdown.insertSeparator(len(realative) + 1)
