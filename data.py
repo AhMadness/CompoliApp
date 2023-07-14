@@ -64,6 +64,19 @@ for country in g20:
     data_g20[country.title()] = data[country.title()]
 # print(data_g20)
 
+# -------------------------- NATO -------------------------- #
+
+nato = ["albania", "belgium", "bulgaria", "canada", "croatia", "czech republic", "denmark", "estonia", "finland", 
+        "france", "germany", "greece", "hungary", "iceland", "italy", "latvia", "lithuania", "luxembourg", "montenegro", 
+        "netherlands", "north macedonia", "norway", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden", 
+        "turkey", "united kingdom", "united states"]
+
+
+data_nato = {}
+for country in nato:
+    data_nato[country.title()] = data[country.title()]
+# print(data_nato)
+
 
 # ---------------------- USA STATES ----------------------- #
 
