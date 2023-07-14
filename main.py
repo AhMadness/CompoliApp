@@ -5,7 +5,7 @@ import tempfile
 import pandas as pd
 from PIL import Image
 
-from data import data, data_usa, data_eu, data_g20, countries, states, data_search
+from data import data, data_usa, data_eu, data_g20, data_nato, countries, states, data_search
 
 import plotly.graph_objects as go
 import plotly.offline as po
@@ -111,7 +111,7 @@ class InputDialog(QDialog):
         self.dropdown.setFixedHeight(24)
         self.dropdown.setFixedWidth(150)
         self.dropdown.addItem("Country List") 
-        special_categories = ["G20", "EU", "All"]  # Your special categories
+        special_categories = ["G20", "EU", "NATO", "All"]  # Your special categories
         self.dropdown.addItems(special_categories)  # Add the special categories to the dropdown
         self.dropdown.insertSeparator(len(special_categories) + 1)  # Insert a separator after the special categories
         self.dropdown.addItems(list(data.keys()))  # Add the list of countries to the dropdown
@@ -189,6 +189,8 @@ class InputDialog(QDialog):
                 countries_to_plot = [country.title() for country in data_eu]
             elif selected_category == "G20":
                 countries_to_plot = [country.title() for country in data_g20]
+            elif selected_category == "NATO":
+                countries_to_plot = [country.title() for country in data_nato]
             elif selected_category == "All":
                 countries_to_plot = list(data.keys())
             else:
