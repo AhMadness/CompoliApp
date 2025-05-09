@@ -1,39 +1,22 @@
 import pandas as pd
 
-# # Get table
-# economic_data = pd.read_html('https://en.wikipedia.org/wiki/Index_of_Economic_Freedom#Rankings_and_scores', header=0)[0]
-# social_data = pd.read_html('https://en.wikipedia.org/wiki/Democracy_Index#Components', header=0)[6]
-# # The 6 indicates what section we require (main table data)
+import sys, os
+def resource_path(rel):
+    base = getattr(sys, "_MEIPASS", os.path.abspath("."))
+    return os.path.join(base, rel)
 
-# # Get required columns
-# economic_data = economic_data[['Country', 'Score']]
-# social_data = social_data[['Country', 'Overall score']]
+# excel_file  = pd.read_excel(resource_path('raw_data.xlsx'))
+excel_file  = pd.read_excel(resource_path('data.xlsx'))
 
-# # Merging with countries present in the two dataframes only
-# data = pd.merge(economic_data, social_data, on=['Country'])
+# # Apply the transformation: multiply by 2 and then subtract 10 for economic and social scores
+#excel_file['Economic Score'] = (excel_file['Economic Score'] * 2 - 10)
+#excel_file['Social Score'] = (excel_file['Social Score'] * 2 - 10) * -1
 
-# # Rename the headers
-# data.rename(columns={"Score": "Economic Score", "Overall score": "Social Score"}, inplace=True)
-# data = data.sort_values("Country")
+#excel_file.to_excel('data.xlsx', index=False)
+#
+# excel_file = pd.read_excel('data.xlsx')
+# print(excel_file)
 
-# # Reset index
-# data = data.reset_index(drop=True)  # drop previous index
-
-# # Convert values to numeric
-# data = data.astype({"Economic Score": float, "Social Score": float})
-
-# # Save raw data to excel
-# # data.to_excel("raw_data.xlsx")
-
-# # Make values between -10 and 10
-# data["Economic Score"] = (data["Economic Score"]/10) * 2 - 10   # +0.5 value is bias
-# data["Social Score"] = ((data["Social Score"] - 0.75) * 2 - 10) * -1  # -0.75 value is bias
-# # print(data)
-
-# # Save adjusted data to excel
-# # data.to_excel("data.xlsx")
-
-excel_file = pd.read_excel('data.xlsx')
 data = {}
 for i, j, k in zip(excel_file["Country"], excel_file["Economic Score"], excel_file["Social Score"]):
     data[i] = j, k
@@ -66,9 +49,9 @@ for country in g20:
 
 # -------------------------- NATO -------------------------- #
 
-nato = ["albania", "belgium", "bulgaria", "canada", "croatia", "czech republic", "denmark", "estonia", "finland", 
-        "france", "germany", "greece", "hungary", "iceland", "italy", "latvia", "lithuania", "luxembourg", "montenegro", 
-        "netherlands", "north macedonia", "norway", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden", 
+nato = ["albania", "belgium", "bulgaria", "canada", "croatia", "czech republic", "denmark", "estonia", "finland",
+        "france", "germany", "greece", "hungary", "iceland", "italy", "latvia", "lithuania", "luxembourg", "montenegro",
+        "netherlands", "north macedonia", "norway", "poland", "portugal", "romania", "slovakia", "slovenia", "spain", "sweden",
         "turkey", "united kingdom", "united states"]
 
 
@@ -93,7 +76,8 @@ for country in nato:
 #
 # data_usa.to_excel("data_usa.xlsx")
 
-excel_file2 = pd.read_excel('data_usa.xlsx')
+
+excel_file2 = pd.read_excel(resource_path('data_usa.xlsx'))
 data_usa_real = {}
 data_usa_relative = {}
 for i, j, k, l, m in zip(excel_file2["State"], excel_file2["Real Economic Values"], excel_file2["Real Social Values"],
