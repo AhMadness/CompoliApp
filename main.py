@@ -1,441 +1,308 @@
-import sys
-import os
-import tempfile
+import sys, os, json, base64, tempfile
+from statistics import mean
 
-import pandas as pd
 from PIL import Image
 
-from data import data, data_usa, data_eu, data_g20, data_nato, countries, states, data_search
+from data import (
+    data, data_usa, data_eu, data_g20, data_nato,
+    countries, states, data_search                      # ← your existing modules
+)
 
 import plotly.graph_objects as go
-import plotly.offline as po
+import plotly.io as pio
 
 from PyQt6.QtCore import Qt, QUrl, QTimer
 from PyQt6.QtWebEngineWidgets import QWebEngineView
-from PyQt6.QtGui import QIcon, QAction, QDesktopServices
+from PyQt6.QtGui import QIcon, QDesktopServices
+from PyQt6.QtWidgets import (
+    QApplication, QDialog, QVBoxLayout, QLineEdit, QLabel, QPushButton,
+    QComboBox, QCompleter, QMessageBox, QHBoxLayout, QMenu
+)
 
-from PyQt6.QtWidgets import (QApplication, QDialog, QVBoxLayout, QLineEdit, QLabel, QPushButton, QComboBox, QCompleter, QMessageBox, QHBoxLayout, QMenu)
+def resource_path(rel_path: str):
+    """
+    Return an absolute path whether we’re running from source or from a PyInstaller one-file bundle.
+    """
+    base = getattr(sys, "_MEIPASS", os.path.abspath("."))
+    return os.path.join(base, rel_path)
 
+# ──────────────────────────  MAIN DIALOG  ────────────────────────── #
 
 class InputDialog(QDialog):
-    def __init__(self, view, parent=None):
-        super(InputDialog, self).__init__(parent)
-        self.mPos = None
-        
-# --------------------  PLOTLY GRAPH -------------------- #
-
-        axis_range = [-10, 10]
-
-        self.fig = go.Figure()
-
-        self.fig.update_xaxes(range=axis_range, title='', tickmode='linear', showticklabels=False, side='top', gridcolor="rgb(224,224,224)", showgrid=False)
-        self.fig.update_yaxes(range=axis_range, title='', tickmode='linear', showticklabels=False, side='right', gridcolor="rgb(224,224,224)", showgrid=False)
-
-        self.fig.update_layout(
-            plot_bgcolor='rgb(255,255,255)', 
-            height=600, 
-            width=600, 
-            margin=dict(l=20, r=0, t=0, b=20),
-            autosize=False
-        )
-
-        # fig.add_vline(x=0, line_width=3)
-        # fig.add_hline(y=0, line_width=3)
-
-        # Adding X & Y Axis ~
-        self.fig.add_trace(go.Scatter(x=[-11, 11], y=[0, 0], marker=dict(color="black", opacity=1), showlegend=False))
-        self.fig.add_trace(go.Scatter(x=[0, 0], y=[-11, 11], marker=dict(color="black", opacity=1), showlegend=False))
-
-        # Add Axis Labels ~
-        font = dict(size=18, color='black', family="Montserrat")
-        self.fig.add_annotation(x=-10, y=0, text="Communism", xanchor='right', yanchor='middle', textangle=-90, showarrow=False, font=font)
-        self.fig.add_annotation(x=10, y=0, text="Capitalism", xanchor='left', yanchor='middle', textangle=90, showarrow=False, font=font)
-        self.fig.add_annotation(x=0, y=10, text="Authoritarian", xanchor='center', yanchor='bottom', showarrow=False, font=font)
-        self.fig.add_annotation(x=0, y=-10, text="Libertarian", xanchor='center', yanchor='top', showarrow=False, font=font)
-
-        # Adding Color To Quadrants ~
-        self.fig.add_shape(type="rect", x0=-10, y0=-10, x1=0, y1=0, fillcolor="#C8E4BC", opacity=1, layer="below", line_width=0,)
-        self.fig.add_shape(type="rect", x0=0, y0=-10, x1=10, y1=0, fillcolor="#F5F5A7", opacity=1, layer="below", line_width=0,)
-        self.fig.add_shape(type="rect", x0=-10, y0=0, x1=0, y1=10, fillcolor="#F9BABA", opacity=1, layer="below", line_width=0,)
-        self.fig.add_shape(type="rect", x0=0, y0=0, x1=10, y1=10, fillcolor="#92D9F8", opacity=1, layer="below", line_width=0,)
-        
+    def __init__(self, view: QWebEngineView, parent=None):
+        super().__init__(parent)
         self.view = view
-        
-        
-# -------------------- PYQT6 GUI -------------------- #
+        self.page_ready = False   # set True when the page finishes first load
+        self.mPos = None
 
+        # ── BUILD BASE FIGURE ── #
+        self.fig = self._build_base_figure()
 
-# -------------------- Adding European Union to Excel file ----------------------- #
-
-        from statistics import mean
-
-        # Adding European Union to the data
-        eu_data = [(data[country][0], data[country][1]) for country in data if country.title() in data_eu]
-        economy_eu = round(mean([score[0] for score in eu_data]), 2)
-        social_eu = round(mean([score[1] for score in eu_data]), 2)
-
-        # Update the data dictionary
-        data["European Union"] = (economy_eu, social_eu)
+        # add EU aggregate once, before any searches
+        eu_scores = [(data[c][0], data[c][1]) for c in data if c.title() in data_eu]
+        data["European Union"] = (round(mean(x for x, _ in eu_scores), 2),
+                                  round(mean(y for _, y in eu_scores), 2))
         data_search.append("European Union")
-                
-# --------------------- INPUT BOX -------------------------- #
 
+        # ── PYQT LAYOUT ── #
+        self._build_gui()
+        self._load_initial_html()   # one-time page load
+
+
+    # ──────────────────────────  BUILDERS  ────────────────────────── #
+
+    def _build_base_figure(self) -> go.Figure:
+        axis_range = [-10, 10]
+        fig = go.Figure()
+        fig.update_xaxes(range=axis_range, title='', tickmode='linear',
+                         showticklabels=False, side='top', showgrid=False)
+        fig.update_yaxes(range=axis_range, title='', tickmode='linear',
+                         showticklabels=False, side='right', showgrid=False)
+        fig.update_layout(plot_bgcolor='white', height=600, width=600,
+                          margin=dict(l=20, r=0, t=0, b=20), autosize=False)
+
+        # axis lines
+        fig.add_trace(go.Scatter(x=[-11, 11], y=[0, 0], marker=dict(color="black"), showlegend=False))
+        fig.add_trace(go.Scatter(x=[0, 0], y=[-11, 11], marker=dict(color="black"), showlegend=False))
+
+        # labels
+        fnt = dict(size=18, color='black', family="Montserrat")
+        fig.add_annotation(x=-10, y=0, text="Communism",  textangle=-90, xanchor='right', yanchor='middle',
+                           showarrow=False, font=fnt)
+        fig.add_annotation(x=10,  y=0, text="Capitalism", textangle=90,  xanchor='left',  yanchor='middle',
+                           showarrow=False, font=fnt)
+        fig.add_annotation(x=0,   y=10, text="Authoritarian", yanchor='bottom',
+                           showarrow=False, font=fnt)
+        fig.add_annotation(x=0,   y=-10,text="Libertarian",   yanchor='top',
+                           showarrow=False, font=fnt)
+
+        # quadrant fills
+        fig.add_shape(type="rect", x0=-10, y0=-10, x1=0,  y1=0,  fillcolor="#C8E4BC", line_width=0, layer="below")
+        fig.add_shape(type="rect", x0=0,  y0=-10, x1=10, y1=0,  fillcolor="#F5F5A7", line_width=0, layer="below")
+        fig.add_shape(type="rect", x0=-10, y0=0,  x1=0,  y1=10, fillcolor="#F9BABA", line_width=0, layer="below")
+        fig.add_shape(type="rect", x0=0,  y0=0,  x1=10, y1=10, fillcolor="#92D9F8", line_width=0, layer="below")
+        return fig
+
+
+    def _build_gui(self):
         self.setWindowTitle("Compoli Navigator")
-        self.setWindowIcon(QIcon("favicon.ico"))
+        view.setWindowIcon(QIcon(resource_path("favicon.ico")))
         self.setFixedSize(222, 150)
-        layout = QVBoxLayout()
+        vbox = QVBoxLayout(self)
 
-# -------------------- SEARCH -------------------- #
+        # search line
+        self.lineEdit = QLineEdit(placeholderText="Search...")
+        self.lineEdit.setFixedSize(150, 24)
+        completer = QCompleter(data_search, self)
+        completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)
+        completer.activated.connect(self._on_completer)
+        self.lineEdit.setCompleter(completer)
+        self.lineEdit.editingFinished.connect(self._on_submit)
+        hl = QHBoxLayout(); hl.addWidget(self.lineEdit); vbox.addLayout(hl)
 
-        self.completer = QCompleter(data_search, self)  # Create a QCompleter with your list of countries
-        self.completer.setCaseSensitivity(Qt.CaseSensitivity.CaseInsensitive)  # Make the completer case-insensitive
-        self.completer.activated.connect(self.on_completer_activated)  # Connect the activated signal to the on_completer_activated method
+        # country dropdown
+        self.dropdown = QComboBox(); self.dropdown.setFixedSize(150, 24)
+        self.dropdown.addItem("Country List")
+        specials = ["G20","EU","NATO","All"]
+        self.dropdown.addItems(specials); self.dropdown.insertSeparator(len(specials)+1)
+        self.dropdown.addItems(list(data.keys()))
+        self.dropdown.currentIndexChanged.connect(self._on_dropdown)
+        hl = QHBoxLayout(); hl.addWidget(self.dropdown); vbox.addLayout(hl)
 
-        # QLineEdit layout
-        search_layout = QHBoxLayout()
-        self.lineEdit = QLineEdit()
-        self.lineEdit.setFixedHeight(24)
-        self.lineEdit.setFixedWidth(150)
-        self.lineEdit.setCompleter(self.completer)  
-        self.lineEdit.editingFinished.connect(self.on_submit)  
-        self.lineEdit.setPlaceholderText("Search...")
-        search_layout.addWidget(self.lineEdit)
-        layout.addLayout(search_layout)
-        
+        # state dropdown
+        self.stateDropdown = QComboBox(); self.stateDropdown.setFixedSize(150, 24)
+        self.stateDropdown.addItem("U.S State List")
+        modes = ["Real","Relative"]
+        self.stateDropdown.addItems(modes); self.stateDropdown.insertSeparator(len(modes)+1)
+        self.stateDropdown.addItems(list(data_usa["Real"].keys()))
+        self.stateDropdown.currentIndexChanged.connect(self._on_state_dropdown)
+        hl = QHBoxLayout(); hl.addWidget(self.stateDropdown); vbox.addLayout(hl)
 
-# -------------------- DROPDOWN -------------------- #
-        
-        # QComboBox layout for countries
-        dropdown_layout = QHBoxLayout()
-        self.dropdown = QComboBox()  
-        self.dropdown.setFixedHeight(24)
-        self.dropdown.setFixedWidth(150)
-        self.dropdown.addItem("Country List") 
-        special_categories = ["G20", "EU", "NATO", "All"]  # Your special categories
-        self.dropdown.addItems(special_categories)  # Add the special categories to the dropdown
-        self.dropdown.insertSeparator(len(special_categories) + 1)  # Insert a separator after the special categories
-        self.dropdown.addItems(list(data.keys()))  # Add the list of countries to the dropdown
-        self.dropdown.currentIndexChanged.connect(self.on_dropdown_changed)  # Connect to its signal
-        dropdown_layout.addWidget(self.dropdown)
-        layout.addLayout(dropdown_layout)
-        
-        # QComboBox layout for states
-        dropdown_state_layout = QHBoxLayout()
-        self.stateDropdown = QComboBox()  
-        self.stateDropdown.setFixedHeight(24)
-        self.stateDropdown.setFixedWidth(150)
-        self.stateDropdown.addItem("U.S State List") 
-        realative = ["Real", "Relative"]
-        self.stateDropdown.addItems(realative)  # add 'Real' and 'Relative' to stateDropdown
-        self.stateDropdown.insertSeparator(len(realative) + 1)
-        self.stateDropdown.addItems(list(data_usa["Real"].keys()))  # Add the list of states to the dropdown
-        self.stateDropdown.currentIndexChanged.connect(self.on_stateDropdown_changed)  # Connect to its signal
-        dropdown_state_layout.addWidget(self.stateDropdown)
-        layout.addLayout(dropdown_state_layout)
+        # buttons
+        plotBtn = QPushButton("Plot!")
+        plotBtn.setFixedSize(60, 30)
+        plotBtn.clicked.connect(self._on_submit)
+
+        resetBtn = QPushButton("Reset")
+        resetBtn.setFixedSize(60, 30)
+        resetBtn.clicked.connect(self._on_reset)
+
+        refBtn = QPushButton("?")
+        refBtn.setFixedSize(20, 20)
+        refBtn.clicked.connect(self._on_refs)
+        refBtn.setToolTip("References")
+
+        hl = QHBoxLayout(); hl.addStretch(1)
+        hl.addWidget(plotBtn); hl.addWidget(resetBtn); hl.addWidget(refBtn); hl.addStretch(1)
+        vbox.addLayout(hl)
 
 
-# -------------------- BUTTONS -------------------- #
+    # ──────────────────────────  INITIAL PAGE LOAD  ────────────────────────── #
 
-        # Button layout
-        button_layout = QHBoxLayout()
-        button_layout.addStretch(1)  # Pushes the buttons to the center
+    def _load_initial_html(self):
+        """Load the base figure once and inject JS helpers."""
+        fig_html = pio.to_html(self.fig, include_plotlyjs='cdn',
+                               full_html=False, div_id='chart')
+        helpers = """
+        <script>
+        function addPoint(trace){ Plotly.addTraces('chart', trace); }
+        function addFlag(b64,x,y){
+            const img={source:'data:image/png;base64,'+b64,
+                       xref:'x',yref:'y',x:x,y:y,sizex:1,sizey:1,
+                       xanchor:'center',yanchor:'middle'};
+            const cur = (document.getElementById('chart').layout.images||[]);
+            Plotly.relayout('chart',{images:cur.concat([img])});
+        }
+        </script>
+        """
+        html = f"<html><head><meta charset='utf-8'></head><body>{fig_html}{helpers}</body></html>"
 
-        # Plot Button
-        self.button = QPushButton("Plot!")
-        self.button.setFixedSize(60, 30)
-        self.button.clicked.connect(self.on_submit)
-        button_layout.addWidget(self.button)
+        self.view.loadFinished.connect(lambda ok: setattr(self, "page_ready", bool(ok)))
+        self.view.setHtml(html, QUrl("about:blank"))
 
-        # Reset Button
-        self.reset_button = QPushButton("Reset")
-        self.reset_button.setFixedSize(60, 30)
-        self.reset_button.clicked.connect(self.on_reset)
-        button_layout.addWidget(self.reset_button)
 
-        # "?" Button
-        self.dropdown_button = QPushButton("?", self)
-        self.dropdown_button.setFixedSize(20, 20)
-        self.dropdown_button.clicked.connect(self.on_dropdown_clicked)
-        self.dropdown_button.setToolTip("References")
+    # ──────────────────────────  EVENT HANDLERS  ────────────────────────── #
 
-        button_layout.addWidget(self.dropdown_button) 
-
-        button_layout.addStretch(1)  # Pushes the "?" button to the right
-        layout.addLayout(button_layout)
-
-        self.setLayout(layout)
-
-        self.view_page()
-        
-# -------------------- FUCNTIONS -------------------- #
-
-    def view_page(self):
-        # Create a temporary file
-        temp_file_name = tempfile.mktemp(".html")
-
-        config = {"displayModeBar": False, "showTips": False}
-
-        # Save the Plotly figure to the temporary file
-        po.plot(self.fig, filename=temp_file_name, auto_open=False, config=config)
-
-        # Load the temporary file in the QWebEngineView
-        self.view.load(QUrl.fromLocalFile(temp_file_name))
-        
-    def on_dropdown_changed(self, index):
-        selected_category = self.dropdown.itemText(index)
-
-        if selected_category != "Country List":
-            if selected_category == "EU":
-                countries_to_plot = [country.title() for country in data_eu]
-            elif selected_category == "G20":
-                countries_to_plot = [country.title() for country in data_g20]
-            elif selected_category == "NATO":
-                countries_to_plot = [country.title() for country in data_nato]
-            elif selected_category == "All":
-                countries_to_plot = list(data.keys())
-            else:
-                countries_to_plot = [selected_category]
-
-            for country in countries_to_plot:
-                self.process_country(country)
-
-            # Reset the selected index
-            self.dropdown.blockSignals(True)
-            self.dropdown.setCurrentIndex(0)
-            self.dropdown.blockSignals(False)
-            
-    def on_stateDropdown_changed(self, index):
-        selected_state_category = self.stateDropdown.itemText(index)
-
-        if selected_state_category != "State List":
-            if selected_state_category in ["Real", "Relative"]:
-                states_to_plot = list(data_usa[selected_state_category].keys())
-                type = selected_state_category
-            else:
-                states_to_plot = [selected_state_category]
-                # If a specific state is selected, default to "Real"
-                type = "Real"  
-
-            for state in states_to_plot:
-                self.process_state(state, type)
-
-            # Reset the selected index
-            self.stateDropdown.blockSignals(True)
-            self.stateDropdown.setCurrentIndex(0)
-            self.stateDropdown.blockSignals(False)
-            
-            
-    def on_completer_activated(self, text):
-        if ' - USA' in text:  # if text is a state
-            state = text.replace(' - USA', '')  # remove ' - USA' from the text
-            self.process_state(state, "Real")  # by default, we'll use "Real" for states
-        else:  # if text is a country
-            self.process_country(text)
+    def _on_completer(self, text:str):
+        if ' - USA' in text:
+            self._plot_state(text.replace(' - USA',''), "Real")
+        else:
+            self._plot_country(text)
         QTimer.singleShot(250, self.lineEdit.clear)
 
-    # def on_submit(self):
-    #     country = self.lineEdit.text().title() or "Default Country"  # Default country name
-    #     self.process_country(country)
-    #     self.lineEdit.clear()
-    
-    def on_submit(self):
-        text = self.lineEdit.text().title().strip()  # added .strip() to remove leading/trailing spaces
-        if text:  # check if string is not empty
-            if text in states:  # if text is a state
-                self.process_state(text, "Real")  # by default, we'll use "Real" for states
-            else:  # if text is a country
-                self.process_country(text)
+    def _on_submit(self):
+        txt = self.lineEdit.text().title().strip()
+        if not txt: return
+        if txt in states:
+            self._plot_state(txt, "Real")
+        else:
+            self._plot_country(txt)
         self.lineEdit.clear()
-            
-    def on_reset(self):
-        msgBox = QMessageBox()
-        msgBox.setIcon(QMessageBox.Icon.Question)
-        msgBox.setText("Are you sure you want to reset the plot?")
-        msgBox.setWindowTitle("Reset Confirmation")
-        msgBox.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
-        
-        returnValue = msgBox.exec()
-        if returnValue == QMessageBox.StandardButton.Yes:
-            # Resetting the plot
-            self.fig = go.Figure()
-            
-            axis_range = [-10, 10]
 
-            self.fig.update_xaxes(range=axis_range, title='', tickmode='linear', showticklabels=False, side='top', gridcolor="rgb(224,224,224)", showgrid=False)
-            self.fig.update_yaxes(range=axis_range, title='', tickmode='linear', showticklabels=False, side='right', gridcolor="rgb(224,224,224)", showgrid=False)
+    def _on_dropdown(self, idx:int):
+        choice = self.dropdown.itemText(idx)
+        if choice == "Country List": return
 
-            self.fig.update_layout(
-                plot_bgcolor='rgb(255,255,255)', 
-                height=600, 
-                width=600, 
-                margin=dict(l=20, r=0, t=0, b=20),
-                autosize=False
-            )
+        mapping = {
+            "EU"  : [c.title() for c in data_eu],
+            "G20" : [c.title() for c in data_g20],
+            "NATO": [c.title() for c in data_nato],
+            "All" : list(data.keys())
+        }
+        for country in mapping.get(choice, [choice]):
+            self._plot_country(country)
 
-            # Adding X & Y Axis
-            self.fig.add_trace(go.Scatter(x=[-11, 11], y=[0, 0], marker=dict(color="black", opacity=1), showlegend=False))
-            self.fig.add_trace(go.Scatter(x=[0, 0], y=[-11, 11], marker=dict(color="black", opacity=1), showlegend=False))
+        self.dropdown.blockSignals(True); self.dropdown.setCurrentIndex(0); self.dropdown.blockSignals(False)
 
-            # Add Axis Labels
-            font = dict(size=18, color='black', family="Montserrat")
-            self.fig.add_annotation(x=-10, y=0, text="Communism", xanchor='right', yanchor='middle', textangle=-90, showarrow=False, font=font)
-            self.fig.add_annotation(x=10, y=0, text="Capitalism", xanchor='left', yanchor='middle', textangle=90, showarrow=False, font=font)
-            self.fig.add_annotation(x=0, y=10, text="Authoritarian", xanchor='center', yanchor='bottom', showarrow=False, font=font)
-            self.fig.add_annotation(x=0, y=-10, text="Libertarian", xanchor='center', yanchor='top', showarrow=False, font=font)
+    def _on_state_dropdown(self, idx:int):
+        choice = self.stateDropdown.itemText(idx)
+        if choice == "U.S State List": return
 
-            # Adding Color To Quadrants
-            self.fig.add_shape(type="rect", x0=-10, y0=-10, x1=0, y1=0, fillcolor="#C8E4BC", opacity=1, layer="below", line_width=0,)
-            self.fig.add_shape(type="rect", x0=0, y0=-10, x1=10, y1=0, fillcolor="#F5F5A7", opacity=1, layer="below", line_width=0,)
-            self.fig.add_shape(type="rect", x0=-10, y0=0, x1=0, y1=10, fillcolor="#F9BABA", opacity=1, layer="below", line_width=0,)
-            self.fig.add_shape(type="rect", x0=0, y0=0, x1=10, y1=10, fillcolor="#92D9F8", opacity=1, layer="below", line_width=0,)
-
-            self.view_page()
-
-
-    def process_country(self, country):
-        if country in data:  # Check if country is in the data dictionary
-            x, y = data[country]  # Get economic and social scores directly from the data dictionary
-
-            flag_file = f"flags/{country}.png"
-            if os.path.isfile(flag_file):
-                flag_image = go.layout.Image(
-                    source=Image.open(flag_file),
-                    xref="x",
-                    yref="y",
-                    x=x,  # Adjust the x position of the flag image
-                    y=y,  # Adjust the y position of the flag image
-                    sizex=1,
-                    sizey=1,
-                    xanchor="center",
-                    yanchor="middle"
-                )
-
-                scatter_point = go.Scatter(
-                    x=[x],
-                    y=[y],
-                    mode="markers",
-                    marker=dict(size=10, symbol='circle', color="black"),
-                    showlegend=False,
-                    hovertemplate=f"<span>{country}</span><extra></extra>",
-                    hoverlabel=dict(bgcolor='white', font=dict(color='black'))
-                )
-                self.fig.add_layout_image(flag_image)
-                self.fig.add_trace(scatter_point)
-                self.view_page()  # Update the graph with the new flag image
-
-            else:
-                # print(f"No flag file found for {country}")
-                pass
+        if choice in ("Real","Relative"):
+            for st in data_usa[choice].keys():
+                self._plot_state(st, choice)
         else:
-            # print(f"No data found for {country}")
-            pass
-            
-    def process_state(self, state, type):
-        # Check if the state is in the data_usa[type] dictionary
-        if state in data_usa[type]:  
-            x, y = data_usa[type][state]
+            self._plot_state(choice, "Real")
 
-            flag_file = f"flags_usa/{state}.png"
-            if os.path.isfile(flag_file):
-                flag_image = go.layout.Image(
-                    source=Image.open(flag_file),
-                    xref="x",
-                    yref="y",
-                    x=x,  # Adjust the x position of the flag image
-                    y=y,  # Adjust the y position of the flag image
-                    sizex=1,
-                    sizey=1,
-                    xanchor="center",
-                    yanchor="middle"
-                )
+        self.stateDropdown.blockSignals(True); self.stateDropdown.setCurrentIndex(0); self.stateDropdown.blockSignals(False)
 
-                scatter_point = go.Scatter(
-                    x=[x],
-                    y=[y],
-                    mode="markers",
-                    marker=dict(size=10, symbol='circle', color="black"),
-                    showlegend=False,
-                    hovertemplate=f"<span>{state}</span><extra></extra>",
-                    hoverlabel=dict(bgcolor='white', font=dict(color='black'))
-                )
-                self.fig.add_layout_image(flag_image)
-                self.fig.add_trace(scatter_point)
-                self.view_page()  # Update the graph with the new flag image
 
-            else:
-                # print(f"No flag file found for {state}")
-                pass
+    # ──────────────────────────  PLOTTING HELPERS  ────────────────────────── #
+
+    def _run_js(self, script:str):
+        """Queue JS code; wait for initial load if needed."""
+        if self.page_ready:
+            self.view.page().runJavaScript(script)
         else:
-            # print(f"No data found for {state}")
-            pass
+            QTimer.singleShot(100, lambda s=script: self._run_js(s))
 
-            
-    def create_menu(self):
+    def _js_add_point(self, trace:dict):
+        self._run_js(f"addPoint({json.dumps(trace)});")
+
+    def _js_add_flag(self, path:str, x:float, y:float):
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode()
+        self._run_js(f"addFlag('{b64}', {x}, {y});")
+
+    # country / state to plot
+    def _plot_country(self, country:str):
+        if country not in data: return
+        x, y = data[country]
+
+        trace = dict(x=[x], y=[y], mode='markers',
+                     marker=dict(size=10, symbol='circle', color='black'),
+                     showlegend=False,
+                     hovertemplate=f"<span>{country}</span><extra></extra>")
+        self._js_add_point(trace)
+
+        flag = resource_path(f"flags/{country}.png")
+        if os.path.isfile(flag):
+            self._js_add_flag(flag, x, y)
+
+    def _plot_state(self, state:str, mode:str):
+        if state not in data_usa[mode]: return
+        x, y = data_usa[mode][state]
+
+        trace = dict(x=[x], y=[y], mode='markers',
+                     marker=dict(size=10, symbol='circle', color='black'),
+                     showlegend=False,
+                     hovertemplate=f"<span>{state}</span><extra></extra>")
+        self._js_add_point(trace)
+
+        flag = resource_path(f"flags_usa/{state}.png")
+        if os.path.isfile(flag):
+            self._js_add_flag(flag, x, y)
+
+
+    # ──────────────────────────  RESET  ────────────────────────── #
+
+    def _on_reset(self):
+        if QMessageBox.question(self, "Reset confirmation", "Reset the plot?") != QMessageBox.StandardButton.Yes:
+            return
+        self.fig = self._build_base_figure()
+        self.page_ready = False
+        self._load_initial_html()
+
+
+    # ──────────────────────────  MISC  ────────────────────────── #
+
+    def _on_refs(self):
         menu = QMenu(self)
+        menu.addAction("Economic Data",
+                       lambda: self._open("https://en.wikipedia.org/wiki/Index_of_Economic_Freedom#Rankings_and_scores"))
+        menu.addAction("Social Data",
+                       lambda: self._open("https://en.wikipedia.org/wiki/Democracy_Index#Components"))
+        menu.addAction("USA Data",
+                       lambda: self._open("https://www.freedominthe50states.org/"))
+        menu.exec(self.sender().mapToGlobal(self.sender().rect().bottomLeft()))
 
-        economic_data_action = menu.addAction("Economic Data")
-        economic_data_action.triggered.connect(lambda: self.open_url("https://en.wikipedia.org/wiki/Index_of_Economic_Freedom#Rankings_and_scores"))
-
-        social_data_action = menu.addAction("Social Data")
-        social_data_action.triggered.connect(lambda: self.open_url("https://en.wikipedia.org/wiki/Democracy_Index#Components"))
-        
-        usa_data_action = menu.addAction("USA Data")
-        usa_data_action.triggered.connect(lambda: self.open_url("https://www.freedominthe50states.org/"))
-        
-        return menu
-    
-    # Defocus the reference button
-    def showEvent(self, event):
-        super().showEvent(event)
-        self.lineEdit.setFocus()
-
-    def open_url(self, url):
+    def _open(self,url:str):
         QDesktopServices.openUrl(QUrl(url))
 
-    def mousePressEvent(self, event):
-        self.mPos = event.pos()
-        event.accept()
+    # ─── smoother window drag ───
+    def mousePressEvent(self, e):
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._drag_pos = e.globalPosition().toPoint()  # store global cursor pos
+            e.accept()
 
-    def on_dropdown_clicked(self):
-        menu = self.create_menu()
-        menu.exec(self.dropdown_button.mapToGlobal(self.dropdown_button.rect().bottomLeft()))
+    def mouseMoveEvent(self, e):
+        if (e.buttons() & Qt.MouseButton.LeftButton) and hasattr(self, "_drag_pos"):
+            new_pos = self.pos() + (e.globalPosition().toPoint() - self._drag_pos)
+            self.move(new_pos)
+            self._drag_pos = e.globalPosition().toPoint()  # update for the next move
+            e.accept()
 
-    def mouseMoveEvent(self, event):
-        if event.buttons() == Qt.MouseButton.LeftButton:
-            if self.mPos is not None:
-                # move window to the current mouse position subtract mPos to keep the offset
-                self.move(self.mapToGlobal(event.pos() - self.mPos))
-            event.accept()
-                
-    def closeEvent(self, event):
-        QApplication.quit()
+    def closeEvent(self, e): QApplication.quit()
 
-# -------------------- MAIN APP -------------------- #
 
-# Create a QApplication
-app = QApplication(sys.argv)
+# ──────────────────────────  APP SETUP  ────────────────────────── #
 
-# Create a QWebEngineView
+app  = QApplication(sys.argv)
 view = QWebEngineView()
+view.setWindowTitle("Compoli"); view.setWindowIcon(QIcon("favicon.ico"))
+view.setFixedSize(610,620)
 
-# Set the window title
-view.setWindowTitle("Compoli")
+dlg = InputDialog(view)
+view.show(); dlg.show(); dlg.raise_()
 
-# Set the window icon
-view.setWindowIcon(QIcon("favicon.ico"))
-
-# Resize the window
-view.setFixedSize(610, 620)
-
-# Create an input dialog
-dialog = InputDialog(view)
-
-# Show the QWebEngineView
-view.show()
-
-# Show the input dialog and bring it to the front
-dialog.show()
-dialog.raise_()
-
-# Start the QApplication
 sys.exit(app.exec())
